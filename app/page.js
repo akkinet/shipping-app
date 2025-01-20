@@ -4,15 +4,14 @@ import { useState } from "react";
 
 export default function Home() {
   const [shipment, setShipment] = useState(null);
-  const [rates, setRates] = useState([]);
-  const [loadingRates, setLoadingRates] = useState(false);
   const [trackingInfo, setTrackingInfo] = useState(null);
+  const [trackingNumber, setTrackingNumber] = useState(null);
   const [trackingError, setTrackingError] = useState("");
+  // const [carrier, setCarrier] = useState("ups");
 
   const handleTrackShipment = async () => {
-    const carrier = "usps";
-    const trackingNumber = "123456789";
-
+    const carrier = "shippo"; // Replace with desired carrier (e.g., "ups", "usps", "dhl")
+    const trackingNumber = "SHIPPO_TRANSIT";
     const response = await fetch(
       `/api/track?carrier=${carrier}&tracking=${trackingNumber}`
     );
@@ -36,6 +35,8 @@ export default function Home() {
         state: "NY",
         zip: "10001",
         country: "US",
+        email: "sender@example.com", // Add email
+        phone: "+15551234567", // Add phone number
       },
       address_to: {
         name: "Receiver",
@@ -44,6 +45,8 @@ export default function Home() {
         state: "CA",
         zip: "94103",
         country: "US",
+        email: "receiver@example.com", // Add recipient email
+        phone: "+15559876543", // Add recipient phone number
       },
       parcels: [
         {
@@ -55,6 +58,8 @@ export default function Home() {
           mass_unit: "lb",
         },
       ],
+      carrier_accounts: null, // Let Shippo auto-select available carriers
+      shipment_date: new Date().toISOString().replace("Z", "+00:00"), // Convert UTC to offset format
     };
 
     const response = await fetch("/api/shipment", {
@@ -66,16 +71,66 @@ export default function Home() {
     });
 
     const data = await response.json();
+    if (data.error) {
+      console.error("Failed to create shipment:", data.error);
+      return;
+    }
     setShipment(data);
+    
+    // Get the cheapest rate
+    const selectedRate = data.rates[0]; // Choosing the first rate available
 
-    // Fetch rates after shipment creation
-    if (data.object_id) {
-      setLoadingRates(true);
-      const ratesResponse = await fetch(`/api/rates?id=${data.object_id}`);
-      const ratesData = await ratesResponse.json();
-      console.log(ratesData);
-      setRates(ratesData);
-      setLoadingRates(false);
+    if (!selectedRate) {
+      console.log("No rates available for this shipment.");
+      return;
+    }
+
+    console.log(
+      "Rate Selected:",
+      selectedRate.amount,
+      selectedRate.currency,
+      "Provider:",
+      selectedRate.provider
+    );
+    // setCarrier(selectedRate.provider);
+
+    // Buy the shipping label
+    let transaction = await fetch("/api/transaction", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ rate: selectedRate.object_id }),
+    });
+
+    transaction = await transaction.json();
+
+    if (transaction.tracking_number) {
+      console.log("Tracking Number:", transaction.tracking_number);
+      setTrackingNumber(transaction.tracking_number);
+      console.log("Label URL:", transaction.label_url);
+    } else {
+      console.log("No tracking number received.");
+      console.log(
+        "Tracking number not available yet. Retrying in 5 seconds..."
+      );
+      setTimeout(async () => {
+        let updatedTransaction = await fetch(
+          `/api/transaction?id=${transaction.object_id}`
+        );
+        updatedTransaction = await updatedTransaction.json();
+        console.log("Retried Transaction Response:", updatedTransaction);
+
+        if (updatedTransaction.results) {
+          setTrackingNumber(updatedTransaction.results[0].tracking_number);
+          console.log(
+            "Tracking Number Retrieved:",
+            updatedTransaction.results[0].tracking_number
+          );
+        } else {
+          console.log("Still no tracking number available.");
+        }
+      }, 5000);
     }
   };
 
@@ -96,20 +151,6 @@ export default function Home() {
         </div>
       )}
 
-      {loadingRates && <p>Loading rates...</p>}
-
-      {rates.length > 0 && (
-        <div className="mt-5">
-          <h2 className="text-xl font-semibold">Shipping Rates</h2>
-          <ul>
-            {rates.map((rate, index) => (
-              <li key={index}>
-                {rate.provider} - {rate.amount} {rate.currency}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
       <button
         onClick={handleTrackShipment}
         className="mt-5 bg-green-500 text-white px-4 py-2 rounded"
